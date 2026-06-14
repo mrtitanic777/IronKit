@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ironkit"
+version = "0.1.0"
+description = "Reverse-engineering toolkit for Heavy Iron Studios' GoodEngine games (Xbox 360 / Wii)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Tom Clay" }]
+keywords = ["reverse-engineering", "xbox360", "heavy-iron", "goodengine", "scaleform", "modding"]
+dependencies = ["Pillow", "numpy", "fontTools"]
+
+[project.scripts]
+ironkit = "ironkit.cli:main"
+
+[tool.setuptools]
+packages = ["ironkit"]

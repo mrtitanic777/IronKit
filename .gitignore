@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- NEVER commit game data or anything derived from it (copyrighted) ---
+# Bring-your-own game files; keep them out of the repo.
+*.ho
+*.HO
+*.fsb
+*.fev
+*.bik
+*.xex
+*.xma
+*.wav
+*.ttf
+assets/
+GameData/
+menu_art/
+texdump/
+*.log
+out/
