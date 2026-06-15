@@ -55,8 +55,10 @@ def screen_rect(line):
     return min(sx), min(sy), max(sx), max(sy)
 
 
-def _frames(path, tail_bytes=None):
-    """Yield (frame, t_ms, {base:(w,h,rect)}) per frame. tail_bytes limits to the file's end."""
+def _frames(path, tail_bytes=None, fs_x=640.0, fs_tol=60.0):
+    """Yield (frame, t_ms, {base:(w,h,rect)}) per frame. tail_bytes limits to the file's end;
+    fs_x/fs_tol set the viewport-xscale window used to recognise a full-screen pass (a rect is
+    only solved for those). Defaults match a 1280-wide target (xscale ~= 640)."""
     import os
     start = 0
     if tail_bytes:
@@ -75,7 +77,7 @@ def _frames(path, tail_bytes=None):
                 continue
             if line[:1] != "D":
                 continue
-            vp = VP.search(line); fs = vp and abs(float(vp.group(1)) - 640.0) < 60
+            vp = VP.search(line); fs = vp and abs(float(vp.group(1)) - fs_x) < fs_tol
             for w, h, base, fmt in textures(line):
                 if base not in cur:
                     cur[base] = (w, h, screen_rect(line) if fs else None)
@@ -83,10 +85,10 @@ def _frames(path, tail_bytes=None):
             yield cur_f, cur_t, cur
 
 
-def segment_screens(path, min_ms=500, jaccard=0.45):
+def segment_screens(path, min_ms=500, jaccard=0.45, fs_x=640.0, fs_tol=60.0):
     """Group frames into distinct screens by texture-set similarity."""
     segs = []
-    for f, t, bs in _frames(path):
+    for f, t, bs in _frames(path, fs_x=fs_x, fs_tol=fs_tol):
         keys = set(bs)
         if not keys:
             continue
@@ -99,7 +101,7 @@ def segment_screens(path, min_ms=500, jaccard=0.45):
 
 # ----------------------------------------------------------------------------- CLI
 def _screens(args):
-    for s in segment_screens(args.file):
+    for s in segment_screens(args.file, fs_x=args.fs_x, fs_tol=args.fs_tol):
         print("=== screen  %.1f - %.1fs  (%d frames) ===" % (s["t0"] / 1000, s["t1"] / 1000, s["n"]))
         for base, (w, h, r) in sorted(s["bs"].items(), key=lambda kv: -(kv[1][0] * kv[1][1])):
             if w * h < 64 * 64:
@@ -112,7 +114,8 @@ def _screens(args):
 def _solve(args):
     """Element rects on the last frame that draws a `dims` texture (default the 512x512 house)."""
     want = tuple(int(x) for x in args.dims.split("x"))
-    frames = list(_frames(args.file, tail_bytes=16 * 1024 * 1024))
+    frames = list(_frames(args.file, tail_bytes=int(args.tail * 1024 * 1024),
+                          fs_x=args.fs_x, fs_tol=args.fs_tol))
     chosen = None
     for f, t, bs in reversed(frames):
         if any((w, h) == want for w, h, _ in bs.values()):
@@ -126,10 +129,19 @@ def _solve(args):
         print("   %4dx%-4d base=%-9s %s" % (w, h, base, rect))
 
 
+def _fs_args(a):
+    a.add_argument("--fs-x", type=float, default=640.0,
+                   help="viewport xscale of a full-screen pass (default 640 = 1280-wide target)")
+    a.add_argument("--fs-tol", type=float, default=60.0, help="tolerance around --fs-x")
+
+
 def add_parser(sub):
     p = sub.add_parser("trace", help="decode ReXGlue UP_TRACE_GFX traces into layouts")
     s = p.add_subparsers(dest="cmd", required=True)
     a = s.add_parser("screens", help="segment the trace into distinct screens + their textures")
-    a.add_argument("file"); a.set_defaults(func=_screens)
+    a.add_argument("file"); _fs_args(a); a.set_defaults(func=_screens)
     a = s.add_parser("solve", help="exact element rects on a chosen frame")
-    a.add_argument("file"); a.add_argument("--dims", default="512x512"); a.set_defaults(func=_solve)
+    a.add_argument("file"); a.add_argument("--dims", default="512x512",
+                                           help="pick the last frame that draws this texture size")
+    a.add_argument("--tail", type=float, default=16.0, help="MB from the end of the log to scan")
+    _fs_args(a); a.set_defaults(func=_solve)

@@ -93,12 +93,20 @@ def decode(blob, w, h, fmt, tiled=True, force_opaque=False):
     return Image.fromarray(img[:h, :w], "RGBA")
 
 
-def decode_descriptor(data, P, descID, **kw):
-    """Decode a texture by descriptor asset-ID from a parsed .HO; returns (image, w, h, fmt)."""
-    da = archive.find_asset(P, descID)
+def decode_descriptor(data, P, descID, layer_idx=None, **kw):
+    """Decode a texture by descriptor asset-ID; returns (image, w, h, fmt). For a descriptor id
+    that appears in multiple layers, pass layer_idx to choose the instance (else ValueError)."""
+    da = archive.find_asset(P, descID, layer_idx)
+    if da is None:
+        raise KeyError("texture descriptor %016X not found" % descID)
     desc = archive.asset_bytes(data, da)
     blob_id, fmt, w, h = parse_desc(desc)
-    ba = archive.find_asset(P, blob_id)
+    ba = archive.find_asset(P, blob_id, da.get("layer_idx"))      # prefer the descriptor's layer
+    if ba is None:
+        ms = archive.find_assets(P, blob_id)
+        ba = ms[0] if ms else None
+    if ba is None:
+        raise KeyError("pixel blob %016X not found" % blob_id)
     blob = archive.asset_bytes(data, ba)
     return decode(blob, w, h, fmt, **kw), w, h, fmt
 
@@ -107,7 +115,7 @@ def decode_descriptor(data, P, descID, **kw):
 def _decode(args):
     data = open(args.file, "rb").read()
     P = archive.parse(data)
-    img, w, h, fmt = decode_descriptor(data, P, args.id, force_opaque=args.opaque)
+    img, w, h, fmt = decode_descriptor(data, P, args.id, layer_idx=args.layer, force_opaque=args.opaque)
     out = args.out or ("%016X_%dx%d.png" % (args.id, w, h))
     img.save(out)
     print("decoded %016X  %dx%d  fmt=0x%X -> %s" % (args.id, w, h, fmt, out))
@@ -148,6 +156,7 @@ def add_parser(sub):
     s = p.add_subparsers(dest="cmd", required=True)
     a = s.add_parser("decode", help="decode one texture (by descriptor id) from a .HO")
     a.add_argument("file"); a.add_argument("--id", required=True, type=lambda x: int(x, 16))
+    a.add_argument("--layer", type=int, default=None, help="layer index (for duplicated ids)")
     a.add_argument("-o", "--out"); a.add_argument("--opaque", action="store_true",
                                                   help="ignore alpha (for DXT1 opaque-white masks)")
     a.set_defaults(func=_decode)

@@ -16,27 +16,45 @@ u32 = lambda d, o: struct.unpack_from("<I", d, o)[0]
 
 
 def find_movies(data):
-    """Yield (offset, magic, body) for each GFx/CFX movie embedded in data."""
-    for m in re.finditer(rb"[CG]F[XC]", data):
+    """Yield (offset, magic, body) for each *valid* GFx (uncompressed) / CFX (zlib) movie in data.
+
+    Validates the version byte, declared length, that the tag stream parses and ends in an End
+    tag -- so incidental "GFX"/"CFX" byte runs (e.g. in shader source) are not reported as movies.
+    """
+    n = len(data)
+    for m in re.finditer(rb"GFX|CFX", data):
         i = m.start()
-        if data[i:i + 3] not in (b"GFX", b"CFX", b"GFC"):
+        if i + 8 > n:
+            continue
+        if not 1 <= data[i + 3] <= 20:                  # GFx/SWF version byte is small
             continue
         flen = u32(data, i + 4)
+        if not 8 <= flen <= n - i:                      # plausible declared length
+            continue
         body = data[i + 8:i + 8 + flen]
         if data[i:i + 3] == b"CFX":
             try:
                 body = zlib.decompress(body)
             except Exception:
                 continue
+        try:
+            codes = {c for c, _ in parse_tags(body)}
+        except Exception:
+            continue
+        if 0 not in codes or 1 not in codes:               # real movie: ShowFrame(1) + End(0)
+            continue
         yield i, data[i:i + 3].decode("latin1"), body
 
 
 def wrapper_name(data, gfx_off):
-    """Best-effort movie name from the GoodEngine wrapper preceding the GFX magic."""
-    start = max(0, gfx_off - 512)
-    chunk = data[start:gfx_off]
-    names = re.findall(rb"[\x20-\x7e]{3,}", chunk)
-    return names[-1].decode("latin1") if names else ""
+    """Best-effort movie name from the GoodEngine wrapper preceding the GFX magic.
+    Returns "" instead of junk when there's no clean identifier (e.g. for FONT.ho)."""
+    chunk = data[max(0, gfx_off - 512):gfx_off]
+    for s in reversed(re.findall(rb"[\x20-\x7e]{2,}", chunk)):
+        t = s.decode("latin1").strip()
+        if re.fullmatch(r"[A-Za-z0-9_.\-]{2,48}", t) and re.search(r"[A-Za-z]", t) and len(set(t)) > 1:
+            return t
+    return ""
 
 
 def parse_tags(body):
@@ -73,14 +91,15 @@ def ext_images(body):
 
 
 def fonts(body):
-    """DefineFont2(48)/DefineFont3(75): (tagCode, fontId, name, numGlyphs, bold, hasLayout)."""
+    """DefineFont2/3: (version, fontId, name, numGlyphs, bold, hasLayout).
+    `version` is the SWF font version (2 or 3), not the raw tag code (48/75)."""
     out = []
     for code, d in parse_tags(body):
         if code in (48, 75) and len(d) >= 6:
             fid, flags, nlen = u16(d, 0), d[2], d[4]
             name = d[5:5 + nlen].split(b"\x00")[0].decode("latin1", "replace")
             ng = u16(d, 5 + nlen)
-            out.append((code, fid, name, ng, bool(flags & 1), bool(flags & 0x80)))
+            out.append((2 if code == 48 else 3, fid, name, ng, bool(flags & 1), bool(flags & 0x80)))
     return out
 
 
@@ -144,9 +163,9 @@ def _fonts(args):
     data, movies = _each(args)
     for off, mg, body in movies:
         nm = wrapper_name(data, off)
-        for code, fid, name, ng, bold, lay in fonts(body):
+        for ver, fid, name, ng, bold, lay in fonts(body):
             print("%-24s DefineFont%d id=%d %-20s glyphs=%d%s%s"
-                  % (nm, code, fid, repr(name), ng, " bold" if bold else "", " layout" if lay else ""))
+                  % (nm, ver, fid, repr(name), ng, " bold" if bold else "", " layout" if lay else ""))
 
 
 def _placements(args):

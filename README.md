@@ -32,9 +32,10 @@ Requires Python 3.9+, Pillow, numpy, fontTools.
 
 ```bash
 ironkit ho info        MNUS.ho                     # layers, asset counts, type breakdown
-ironkit ho list        MNUS.ho --type 0x294F89DF   # filter by asset type
+ironkit ho list        MNUS.ho --type 0x2952081F   # filter by asset type
+ironkit ho dups        MNUS.ho                     # ids that appear in multiple layers
 ironkit ho extract     MNUS.ho -o dump/            # dump raw asset bytes
-ironkit ho replace     MNUS.ho --id 0000..DB7 --data new.bin -o MNUS_mod.ho
+ironkit ho replace     MNUS.ho --id 0000..DB7 --layer 8 --data new.bin -o MNUS_mod.ho
 
 ironkit tex decode     MNUS.ho --id 000000060000327D -o logo.png
 ironkit tex batch      MNUS.ho -o textures/        # every texture in the archive
@@ -49,6 +50,22 @@ ironkit font extract   FONT.ho --id 2 -o Interstate-Bold.ttf
 
 ironkit trace screens  gfx_trace.log               # segment a port trace into screens
 ironkit trace solve    gfx_trace.log --dims 512x512  # exact element rects on a screen
+```
+
+## Testing
+
+```bash
+pip install -e .[dev]
+pytest                       # pure unit tests run anywhere
+```
+
+The archive-writer and font-extract integration tests need real game files — point env vars at
+your own copy to enable them:
+
+```bash
+set IRONKIT_TEST_HO=...\MNUS.ho
+set IRONKIT_TEST_FONT=...\FONT.ho
+pytest
 ```
 
 ## How the formats were cracked

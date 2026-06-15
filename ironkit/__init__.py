@@ -11,4 +11,4 @@ Subpackages map 1:1 to CLI groups:
     font     - extract embedded GFx DefineFont3 vector fonts to TTF
     trace    - decode UP_TRACE_GFX / UP_DUMP_TEX traces into screen layouts
 """
-__version__ = "0.1.0"
+__version__ = "0.1.1"

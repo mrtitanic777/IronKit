@@ -132,8 +132,8 @@ def extract(data, font_id, out_path, family=None):
 def _list(args):
     data = open(args.file, "rb").read()
     for off, mg, body in gfx.find_movies(data):
-        for code, fid, name, ng, bold, lay in gfx.fonts(body):
-            print("DefineFont%d id=%d %-20s glyphs=%d%s" % (code, fid, repr(name), ng, " bold" if bold else ""))
+        for ver, fid, name, ng, bold, lay in gfx.fonts(body):
+            print("DefineFont%d id=%d %-20s glyphs=%d%s" % (ver, fid, repr(name), ng, " bold" if bold else ""))
 
 
 def _extract(args):

@@ -1,5 +1,7 @@
 """IronKit unified command-line interface."""
 import argparse
+import struct
+import sys
 
 from . import __version__, archive, texture, gfx, font, trace
 
@@ -14,7 +16,14 @@ def main(argv=None):
     for mod in (archive, texture, gfx, font, trace):
         mod.add_parser(sub)
     args = p.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except (FileNotFoundError, IsADirectoryError, PermissionError, KeyError,
+            ValueError, struct.error) as e:
+        sys.stderr.write("error: %s\n" % e)
+        raise SystemExit(2)
+    except BrokenPipeError:
+        raise SystemExit(0)
 
 
 if __name__ == "__main__":

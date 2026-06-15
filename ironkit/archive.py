@@ -44,18 +44,32 @@ class R:
 
 
 def parse(data):
-    """Parse a .HO archive into a dict tree (header, layers, assets)."""
+    """Parse a .HO archive into a dict tree (header, layers, assets).
+
+    Raises ValueError if the bytes don't look like a valid HEB/.HO archive (so non-archive or
+    truncated input fails with a clear message rather than an opaque struct/index error).
+    """
+    if len(data) < 2048 + 96:
+        raise ValueError("too small to be a .HO archive (%d bytes)" % len(data))
     r = R(data)
     hel = r.raw(2048)
     mast_off = r.p
     mast_ints = [r.i32() for _ in range(24)]
     num = mast_ints[15]
     sect_off = num * 2048
+    if num <= 0 or sect_off + 32 > len(data):
+        raise ValueError("not a valid .HO archive (bad MAST/SECT pointer)")
     r.p = sect_off
     sect_head = [r.i32() for _ in range(8)]
-    layers = [_layer(r, sect_off) for _ in range(sect_head[1])]
-    for L in layers:
+    nlayers = sect_head[1]
+    if not 0 <= nlayers < 100000:
+        raise ValueError("not a valid .HO archive (implausible layer count %d)" % nlayers)
+    layers = [_layer(r, sect_off) for _ in range(nlayers)]
+    for li, L in enumerate(layers):
         _get_assets(r, L, L["offToStart"] * 2048)
+        if L["sub"]["kind"] == "PSL":
+            for a in L["sub"]["assets"]:
+                a["layer_idx"] = li             # tag each asset with its layer (for dup-id handling)
     return {"hel": hel, "mast_off": mast_off, "mast_ints": mast_ints,
             "sect_off": sect_off, "sect_head": sect_head, "layers": layers, "size": len(data)}
 
@@ -131,11 +145,26 @@ def all_assets(P):
     return out
 
 
-def find_asset(P, assetID):
-    for a in all_assets(P):
-        if a["assetID"] == assetID:
-            return a
-    return None
+def find_assets(P, assetID, layer_idx=None):
+    """Every asset matching assetID, optionally restricted to one layer."""
+    return [a for a in all_assets(P)
+            if a["assetID"] == assetID and (layer_idx is None or a.get("layer_idx") == layer_idx)]
+
+
+def find_asset(P, assetID, layer_idx=None):
+    """The single asset matching assetID; None if absent.
+
+    Raises ValueError if the id appears in multiple layers and no layer_idx is given -- the
+    shipping game (e.g. MNUS.ho) has hundreds of duplicate ids, so silently taking the first
+    would be a correctness bug. Pass a layer to disambiguate.
+    """
+    ms = find_assets(P, assetID, layer_idx)
+    if not ms:
+        return None
+    if len(ms) > 1:
+        raise ValueError("asset %016X is ambiguous: %d instances in layers %s (pass a layer)"
+                         % (assetID, len(ms), sorted(set(a.get("layer_idx") for a in ms))))
+    return ms[0]
 
 
 def asset_bytes(data, a):
@@ -147,7 +176,9 @@ def align(n, a):
 
 
 def repack_inslot(data, edits):
-    """edits: list of (asset, newbytes), each <= the asset's slot. In-place patch, no cascade."""
+    """edits: list of (asset, newbytes), each <= the asset's slot. In-place patch, no cascade.
+    The slot tail is zero-filled, so this is not byte-identical to the source when the original
+    padding was non-zero (harmless to the engine)."""
     buf = bytearray(data)
     for a, nd in edits:
         if len(nd) > a["totalDataSize"]:
@@ -163,7 +194,10 @@ def repack_inslot(data, edits):
 
 def replace(P, data, assetID, newdata, layer_idx=None):
     """Replace an asset with newdata of ANY size. Same slot -> in-place; else rebuild that
-    layer's 0x800-aligned block, relocate to EOF, and fix offToStart + sizes."""
+    layer's 0x800-aligned block, relocate to EOF, and fix offToStart + sizes. Pass layer_idx
+    to target one instance of a duplicated id (see find_asset)."""
+    if layer_idx is None and len(find_assets(P, assetID)) > 1:
+        raise ValueError("asset %016X is ambiguous (multiple layers); pass a layer index" % assetID)
     buf = bytearray(data)
     found = None
     for li, L in enumerate(P["layers"]):
@@ -287,11 +321,23 @@ def _extract(args):
 def _replace(args):
     data, P = _load(args.file)
     newdata = open(args.data, "rb").read()
-    out = replace(P, data, args.id, newdata)
+    out = replace(P, data, args.id, newdata, layer_idx=args.layer)
     with open(args.out, "wb") as f:
         f.write(out)
     print("replaced %016X (%d bytes) ; %d -> %d, saved %s"
           % (args.id, len(newdata), len(data), len(out), args.out))
+
+
+def _dups(args):
+    data, P = _load(args.file)
+    from collections import defaultdict
+    m = defaultdict(set)
+    for a in all_assets(P):
+        m[a["assetID"]].add(a.get("layer_idx"))
+    dups = {k: v for k, v in m.items() if len(v) > 1}
+    print("%d asset id(s) appear in multiple layers (use --layer to disambiguate):" % len(dups))
+    for k in sorted(dups):
+        print("  %016X  layers=%s" % (k, sorted(dups[k])))
 
 
 def add_parser(sub):
@@ -304,6 +350,9 @@ def add_parser(sub):
     a = s.add_parser("extract", help="dump raw asset bytes to a folder"); a.add_argument("file")
     a.add_argument("-o", "--out", required=True); a.add_argument("--type", type=lambda x: int(x, 0))
     a.set_defaults(func=_extract)
+    a = s.add_parser("dups", help="list asset ids that appear in more than one layer")
+    a.add_argument("file"); a.set_defaults(func=_dups)
     a = s.add_parser("replace", help="replace one asset's bytes (any size)"); a.add_argument("file")
     a.add_argument("--id", required=True, type=lambda x: int(x, 16)); a.add_argument("--data", required=True)
+    a.add_argument("--layer", type=int, default=None, help="layer index (for duplicated ids)")
     a.add_argument("-o", "--out", required=True); a.set_defaults(func=_replace)
